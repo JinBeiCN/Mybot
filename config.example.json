@@ -1,0 +1,47 @@
+{
+  "napcat": {
+    "host": "127.0.0.1",
+    "port": 2010,
+    "token": "",
+    "heartbeat_interval": 300
+  },
+  "siliconflow": {
+    "api_key": "YOUR_SILICONFLOW_API_KEY_HERE",
+    "base_url": "https://api.siliconflow.cn/v1",
+    "model": "Qwen/Qwen2.5-7B-Instruct"
+  },
+  "bot": {
+    "name": "BeiXAI",
+    "admin_qq": [],
+    "bot_qq": "YOUR_BOT_QQ_NUMBER"
+  },
+  "filter": {
+    "enabled": true,
+    "action": "delete",
+    "keywords": []
+  },
+  "user_profiles": {
+    "1992827821": {
+      "name": "creater",
+      "style": "warm",
+      "preferences": ["喜欢开玩笑", "话比较多"]
+    }
+  },
+  "emotion_dir": "data/emotions",
+  "backgrounds_dir": "data/backgrounds",
+  "user_tiers": {
+    "1": { "name": "基础用户", "context_rounds": 100, "daily_quota": 20 },
+    "2": { "name": "进阶用户", "context_rounds": 200, "daily_quota": 40 },
+    "3": { "name": "高级用户", "context_rounds": 500, "daily_quota": 9999999 }
+  },
+  "web_admin": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 9101,
+    "token": "admin123"
+  },
+  "database": {
+    "path": "data/chat_history.db",
+    "retention_days": 7
+  }
+}

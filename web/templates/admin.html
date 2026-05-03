@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BeiXAI Bot</title>
+<style>
+:root {
+  --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9;
+  --text2: #8b949e; --accent: #58a6ff; --green: #3fb950; --red: #f85149;
+  --orange: #d2991d; --purple: #a371f7;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg); color: var(--text); min-height: 100vh; }
+.header { background: var(--card); border-bottom: 1px solid var(--border);
+  padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
+.header h1 { font-size: 18px; }
+.tabs { display: flex; gap: 4px; padding: 8px 24px; background: var(--card);
+  border-bottom: 1px solid var(--border); }
+.tab { padding: 6px 16px; border: none; background: none; color: var(--text2);
+  cursor: pointer; border-radius: 6px; font-size: 14px; }
+.tab.active { background: var(--accent); color: #fff; }
+.content { padding: 20px 24px; }
+.panel { display: none; }
+.panel.active { display: block; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px; margin-bottom: 24px; }
+.card { background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px; }
+.card:hover { border-color: var(--accent); }
+.card .label { font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+.card .value { font-size: 22px; font-weight: bold; }
+.card .value.green { color: var(--green); }
+.card .value.red { color: var(--red); }
+.card .value.blue { color: var(--accent); }
+.card .value.purple { color: var(--purple); }
+.edt { cursor: pointer; }
+.section { background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.section h3 { font-size: 14px; color: var(--text2); margin-bottom: 12px; }
+.form-row { display: flex; gap: 8px; margin-bottom: 12px; }
+input, select { background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 6px 12px; border-radius: 6px; font-size: 14px; flex: 1; }
+button { padding: 6px 16px; border: none; border-radius: 6px; cursor: pointer;
+  font-size: 14px; font-weight: 500; }
+.btn-red { background: var(--red); color: #fff; }
+.btn-green { background: var(--green); color: #000; }
+.btn-accent { background: var(--accent); color: #fff; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
+th { color: var(--text2); font-weight: 500; }
+.log-viewer { font-family: 'Consolas', 'Courier New', monospace; font-size: 12px;
+  max-height: 500px; overflow-y: auto; background: var(--bg); padding: 12px;
+  border-radius: 6px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.status-dot.on { background: var(--green); }
+.status-dot.off { background: var(--red); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>BeiXAI Bot</h1>
+  <div><span id="connStatus" style="font-size:12px;color:var(--text2)"></span></div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('dashboard')">仪表盘</button>
+  <button class="tab" onclick="switchTab('users')">用户管理</button>
+  <button class="tab" onclick="switchTab('tiers')">分级管理</button>
+  <button class="tab" onclick="switchTab('logs')">运行日志</button>
+  <button class="tab" onclick="switchTab('events')">事件记录</button>
+</div>
+
+<div class="content">
+  <div class="panel active" id="panel-dashboard">
+    <div class="cards" id="statusCards"></div>
+  </div>
+
+  <div class="panel" id="panel-users">
+    <div class="section">
+      <h3>封禁用户</h3>
+      <div class="form-row">
+        <input id="blockUserId" placeholder="QQ号"><button class="btn-red" onclick="blockUser()">封禁</button>
+      </div>
+      <div id="blockedTable"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-tiers">
+    <div class="section">
+      <h3>设置分级</h3>
+      <div class="form-row">
+        <input id="tierUserId" placeholder="QQ号">
+        <select id="tierLevel">
+          <option value="1">Lv.1 基础 ($20/50轮)</option>
+          <option value="2">Lv.2 进阶 ($40/100轮)</option>
+          <option value="3">Lv.3 高级 (999万/完整)</option>
+        </select>
+        <button class="btn-accent" onclick="setTier()">设置</button>
+      </div>
+      <h3 style="margin-top:16px">自定义额度</h3>
+      <div class="form-row">
+        <input id="customUserId" placeholder="QQ号">
+        <input id="customQuota" placeholder="日限额($)" type="number" step="0.01" style="width:130px">
+        <button class="btn-accent" onclick="setCustomQuota()">设限额</button>
+      </div>
+      <div class="form-row">
+        <input id="customCostUserId" placeholder="QQ号">
+        <input id="customCost" placeholder="今日已用($)" type="number" step="0.0001" style="width:130px">
+        <button class="btn-red" onclick="setCustomCost()">设已用</button>
+      </div>
+    </div>
+    <div class="section">
+      <h3>已分级用户</h3>
+      <div id="tiersTable"></div>
+    </div>
+    <div class="section">
+      <h3>用户长期记忆</h3>
+      <div class="form-row">
+        <input id="memoryUserId" placeholder="QQ号"><button class="btn-accent" onclick="loadMemory()">查看记忆</button>
+      </div>
+      <div id="memoryView" style="font-size:13px"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-logs">
+    <div class="section">
+      <h3>运行日志 <button class="btn-accent" style="float:right" onclick="refreshLogs()">刷新</button></h3>
+      <div class="log-viewer" id="logViewer">加载中...</div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-events">
+    <div class="section">
+      <h3>事件记录 <button class="btn-accent" style="float:right" onclick="refreshEvents()">刷新</button></h3>
+      <div class="log-viewer" id="eventViewer">加载中...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ========== API ==========
+async function api(path, opts) {
+  try {
+    opts = opts || {};
+    const res = await fetch(path, opts);
+    document.getElementById('connStatus').innerHTML = '<span class="status-dot on"></span>已连接';
+    if (res.status === 204) return null;
+    return await res.json();
+  } catch (e) {
+    document.getElementById('connStatus').innerHTML = '<span class="status-dot off"></span>断开';
+    return null;
+  }
+}
+
+// ========== Tabs ==========
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('active'); });
+  var idx = {dashboard:1, users:2, tiers:3, logs:4, events:5}[name];
+  document.querySelector('.tab:nth-child(' + idx + ')').classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+  if (name === 'dashboard') loadDashboard();
+  if (name === 'users') loadUsers();
+  if (name === 'tiers') loadTiers();
+  if (name === 'logs') refreshLogs();
+  if (name === 'events') refreshEvents();
+}
+
+// ========== Dashboard ==========
+var serverStartTime = 0;
+var lastFetchTime = Date.now();
+
+async function loadDashboard() {
+  var data = await api('/api/status');
+  if (!data) return;
+  window._startTime = data.uptime_seconds;
+  lastFetchTime = Date.now();
+  serverStartTime = Date.now() - data.uptime_seconds * 1000;
+
+  var c = document.getElementById('statusCards');
+  // 保存模型卡片，避免 auto-refresh 时被清掉
+  var savedModel = document.getElementById('modelCardWrap');
+  c.innerHTML = '';
+
+  // Helper to create cards
+  function card(label, value, cls, onclick, title) {
+    var div = document.createElement('div');
+    div.className = 'card';
+    if (onclick) div.onclick = onclick;
+    if (title) div.title = title;
+    div.innerHTML = '<div class="label">' + label + '</div><div class="value ' + (cls || '') + '">' + value + '</div>';
+    return div;
+  }
+
+  c.appendChild(card('运行时间', data.uptime, 'blue'));
+  c.lastChild.querySelector('.value').id = 'liveUptime';
+
+  c.appendChild(card('WebSocket', data.ws_connected ? '已连接' : '断开', data.ws_connected ? 'green' : 'red'));
+  c.appendChild(card('群数量', data.group_count, ''));
+  c.appendChild(card('封禁用户', data.blocked_users, 'red'));
+  // Model card — 用 wrapper 保护不被 auto-refresh 清掉
+  if (savedModel) {
+    c.appendChild(savedModel);
+  } else {
+    var wrap = document.createElement('div');
+    wrap.id = 'modelCardWrap';
+    wrap.style.cssText = 'grid-column:1/-1;padding:20px';
+    wrap.innerHTML = '<div style="display:flex;align-items:center;gap:16px">' +
+      '<div class="label" style="font-size:14px;min-width:60px">AI 模型 <span style="cursor:pointer;font-size:11px" onclick="event.stopPropagation();loadModels()">[刷新]</span></div>' +
+      '<div id="modelSelects" style="flex:1;display:flex;gap:12px;align-items:center"><span style="color:var(--text2);font-size:13px">加载中...</span></div>' +
+      '</div>';
+    c.appendChild(wrap);
+  }
+
+  c.appendChild(card('速率限制', data.rate_limit + '/min', 'edt', function(){ editRate(data.rate_limit); }, '点击修改'));
+  c.appendChild(card('安全检测', data.hard_check ? '严格' : '宽松', (data.hard_check ? 'red' : 'green') + ' edt', function(){ toggleHardcheck(data.hard_check); }, '点击切换'));
+
+  // Sign card
+  var signCard = document.createElement('div');
+  signCard.className = 'card';
+  var signHtml = '<div class="label">自动打卡 <span style="cursor:pointer;font-size:11px" onclick="event.stopPropagation();toggleSign(' + data.auto_sign_enabled + ')">[' + (data.auto_sign_enabled ? '关闭' : '开启') + ']</span></div>';
+  signHtml += '<div class="value ' + (data.auto_sign_enabled ? 'green' : 'red') + '" style="font-size:16px">' + (data.auto_sign_enabled ? '已启用' : '关闭') + '</div>';
+  if (data.auto_sign_enabled) {
+    signHtml += '<div style="font-size:11px;color:var(--text2);margin-top:3px">';
+    signHtml += '<span onclick="event.stopPropagation();editSignTime(' + data.sign_hour + ',' + data.sign_minute + ')" style="cursor:pointer;border-bottom:1px dashed var(--text2)" title="点击修改时间">打卡时间: ' + pad(data.sign_hour) + ':' + pad(data.sign_minute) + '</span>';
+    signHtml += ' | 群数: ' + data.sign_groups;
+    if (data.sign_last_date) signHtml += ' | 上次: ' + data.sign_last_date;
+    signHtml += '</div>';
+  }
+  signCard.innerHTML = signHtml;
+  c.appendChild(signCard);
+
+  // Proactive card
+  var proCard = document.createElement('div');
+  proCard.className = 'card';
+  var proHtml = '<div class="label">主动推送 <span style="cursor:pointer;font-size:11px" onclick="event.stopPropagation();toggleProactive(' + data.proactive_enabled + ')">[' + (data.proactive_enabled ? '关闭' : '开启') + ']</span></div>';
+  proHtml += '<div class="value ' + (data.proactive_enabled ? 'green' : 'red') + '" style="font-size:18px">' + (data.proactive_enabled ? '运行中' : '已禁用') + '</div>';
+  proHtml += '<div style="font-size:11px;color:var(--text2);margin:4px 0">';
+  if (data.proactive_enabled && data.proactive_target) proHtml += '目标: ' + data.proactive_target;
+  else if (data.proactive_enabled) proHtml += '等待目标...';
+  if (data.proactive_enabled && data.proactive_countdown > 0) proHtml += ' | 下次: ' + fmtTime(data.proactive_countdown);
+  proHtml += '</div>';
+  proCard.innerHTML = proHtml;
+  c.appendChild(proCard);
+}
+
+function pad(n) { return String(n).padStart(2, '0'); }
+function fmtTime(sec) {
+  if (sec <= 0) return '即将...';
+  var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return (h ? h + 'h ' : '') + (m ? m + 'm ' : '') + s + 's';
+}
+
+// ========== Dashboard edits ==========
+async function editRate(current) {
+  var r = prompt('每分钟速率限制:', current);
+  if (r === null || r === '') return;
+  var n = parseInt(r);
+  if (isNaN(n) || n < 1) return alert('请输入大于0的整数');
+  var data = await api('/api/settings/rate', { method: 'POST', body: JSON.stringify({rate: n}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) loadDashboard();
+}
+
+async function toggleHardcheck(current) {
+  var data = await api('/api/settings/hardcheck', { method: 'POST', body: JSON.stringify({enabled: !current}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) loadDashboard();
+}
+
+async function toggleSign(current) {
+  var data = await api('/api/settings/sign-toggle', { method: 'POST', body: JSON.stringify({enabled: !current}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) loadDashboard();
+}
+
+async function editSignTime(h, m) {
+  var t = prompt('打卡时间 (HH:MM):', pad(h) + ':' + pad(m));
+  if (!t) return;
+  var parts = t.split(':');
+  var hour = parseInt(parts[0]), minute = parseInt(parts[1] || '0');
+  if (isNaN(hour) || isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return alert('格式: HH:MM');
+  var data = await api('/api/settings/sign', { method: 'POST', body: JSON.stringify({hour: hour, minute: minute}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) loadDashboard();
+}
+
+async function toggleProactive(current) {
+  var data = await api('/api/proactive/toggle', { method: 'POST', body: JSON.stringify({enabled: !current}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) loadDashboard();
+}
+
+// ========== Users ==========
+async function loadUsers() {
+  var data = await api('/api/users');
+  if (!data || data.users.length === 0) { document.getElementById('blockedTable').innerHTML = '<p style="color:var(--text2)">无封禁用户</p>'; return; }
+  var h = '<table><tr><th>QQ号</th><th>封禁时间</th><th>操作</th></tr>';
+  for (var i = 0; i < data.users.length; i++) {
+    var u = data.users[i];
+    h += '<tr><td>' + u.user_id + '</td><td>' + u.blocked_time + '</td><td><button class="btn-green" onclick="unblockUser(\'' + u.user_id + '\')">解除</button></td></tr>';
+  }
+  h += '</table>';
+  document.getElementById('blockedTable').innerHTML = h;
+}
+
+async function blockUser() {
+  var uid = document.getElementById('blockUserId').value.trim();
+  if (!uid) return alert('请输入QQ号');
+  var data = await api('/api/users/block', { method: 'POST', body: JSON.stringify({user_id: uid}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) { document.getElementById('blockUserId').value = ''; loadUsers(); }
+  else if (data) alert(data.error || '失败');
+}
+
+async function unblockUser(uid) {
+  if (!confirm('解除封禁 ' + uid + '？')) return;
+  var data = await api('/api/users/unblock', { method: 'POST', body: JSON.stringify({user_id: uid}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) loadUsers();
+}
+
+// ========== Tiers ==========
+async function loadTiers() {
+  var data = await api('/api/tiers');
+  if (!data || data.users.length === 0) { document.getElementById('tiersTable').innerHTML = '<p style="color:var(--text2)">暂无分级用户（默认 Lv.1）</p>'; return; }
+  var h = '<table><tr><th>QQ号</th><th>等级</th><th>限额</th><th>今日已用</th><th style="min-width:180px">操作</th></tr>';
+  for (var i = 0; i < data.users.length; i++) {
+    var u = data.users[i];
+    var qs = u.quota < 0 ? '无限' : ('$' + u.quota);
+    var uc = u.quota > 0 && u.daily_cost >= u.quota ? 'color:var(--red)' : '';
+    h += '<tr><td>' + u.user_id + '</td><td>Lv.' + u.tier + ' ' + u.tier_name + '</td><td>' + qs + '</td>';
+    h += '<td style="' + uc + '">$' + u.daily_cost.toFixed(4) + '</td>';
+    h += '<td style="white-space:nowrap">';
+    h += '<button class="btn-green" style="font-size:11px;padding:3px 8px" onclick="resetTier(\'' + u.user_id + '\')">重置Lv</button> ';
+    h += '<button class="btn-accent" style="font-size:11px;padding:3px 8px" onclick="fillCustom(\'' + u.user_id + '\',' + u.daily_cost + ')">自定义</button>';
+    h += '</td></tr>';
+  }
+  h += '</table>';
+  document.getElementById('tiersTable').innerHTML = h;
+}
+
+async function setTier() {
+  var uid = document.getElementById('tierUserId').value.trim();
+  var tier = parseInt(document.getElementById('tierLevel').value);
+  if (!uid) return alert('请输入QQ号');
+  var data = await api('/api/tiers/set', { method: 'POST', body: JSON.stringify({user_id: uid, tier: tier}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) { document.getElementById('tierUserId').value = ''; loadTiers(); }
+}
+
+async function resetTier(uid) {
+  if (!confirm('将 ' + uid + ' 重置为 Lv.1？')) return;
+  var data = await api('/api/tiers/set', { method: 'POST', body: JSON.stringify({user_id: uid, tier: 1}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) loadTiers();
+}
+
+function fillCustom(uid, cost) {
+  document.getElementById('customUserId').value = uid;
+  document.getElementById('customCostUserId').value = uid;
+  document.getElementById('customCost').value = cost.toFixed(4);
+}
+
+async function setCustomQuota() {
+  var uid = document.getElementById('customUserId').value.trim();
+  var amount = parseFloat(document.getElementById('customQuota').value);
+  if (!uid) return alert('请输入QQ号');
+  if (isNaN(amount) || amount < 0) return alert('请输入有效金额');
+  var data = await api('/api/users/balance', { method: 'POST', body: JSON.stringify({user_id: uid, amount: amount}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) { document.getElementById('customQuota').value = ''; loadTiers(); }
+}
+
+async function loadModels() {
+  var data = await api('/api/models');
+  if (!data) return;
+  var el = document.getElementById('modelSelects');
+  if (!el) return;
+  var chats = [], visions = [];
+  for (var i = 0; i < data.models.length; i++) {
+    var m = data.models[i];
+    (m.type === 'vision' ? visions : chats).push(m);
+  }
+  var h = '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">' +
+    '<span style="font-size:12px;color:var(--text2);white-space:nowrap">对话:</span>' +
+    '<select onchange="switchModel(\'chat\',this.value)" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;min-width:180px;max-width:300px">';
+  h += '<option value="' + data.current + '">' + data.current + ' (当前)</option>';
+  for (var j = 0; j < chats.length; j++) { if (chats[j].id !== data.current) h += '<option value="' + chats[j].id + '">' + chats[j].id + '</option>'; }
+  h += '</select>' +
+    '<span style="font-size:12px;color:var(--text2);white-space:nowrap">OCR:</span>' +
+    '<select onchange="switchModel(\'ocr\',this.value)" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;min-width:180px;max-width:300px">';
+  h += '<option value="' + data.ocr_current + '">' + data.ocr_current + ' (当前)</option>';
+  for (var k = 0; k < visions.length; k++) { if (visions[k].id !== data.ocr_current) h += '<option value="' + visions[k].id + '">' + visions[k].id + '</option>'; }
+  h += '</select></div>';
+  // Custom override — 另起一行
+  h += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">' +
+    '<input id="customModelId" placeholder="自定义模型ID" value="' + (data.custom_model||'') + '" style="font-size:11px;padding:4px 8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;width:220px">' +
+    '<input id="customBaseUrl" placeholder="自定义BaseURL" value="' + (data.custom_base_url||'') + '" style="font-size:11px;padding:4px 8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;flex:1;min-width:200px">' +
+    '<button onclick="setCustomModel()" style="font-size:11px;padding:4px 12px;white-space:nowrap">应用</button>' +
+    '</div>';
+  el.innerHTML = h;
+}
+
+async function setCustomModel() {
+  var modelId = document.getElementById('customModelId').value.trim();
+  var baseUrl = document.getElementById('customBaseUrl').value.trim();
+  var data = await api('/api/models/custom', { method: 'POST', body: JSON.stringify({custom_model: modelId, custom_url: baseUrl}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) { loadDashboard(); loadModels(); }
+  else alert('设置失败');
+}
+
+async function switchModel(type, modelId) {
+  if (!confirm('切换到 ' + modelId + '？')) return;
+  var data = await api('/api/models/switch', { method: 'POST', body: JSON.stringify({type: type, model_id: modelId}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) loadDashboard();
+  else alert('切换失败');
+}
+
+async function loadMemory() {
+  var uid = document.getElementById('memoryUserId').value.trim();
+  if (!uid) return alert('请输入QQ号');
+  var data = await api('/api/memory/' + uid);
+  if (!data || data.error) { document.getElementById('memoryView').innerHTML = '<p style="color:var(--red)">加载失败</p>'; return; }
+  var h = '<p style="color:var(--text2)">交互次数: ' + data.total_interactions + ' | 记忆数: ' + data.total_facts + ' | 更新: ' + (data.last_updated || '无') + '</p>';
+  if (data.summary) h += '<p style="background:var(--bg);padding:8px;border-radius:4px;margin:8px 0"><b>摘要:</b> ' + esc(data.summary) + '</p>';
+  if (data.facts && data.facts.length > 0) {
+    h += '<table><tr><th>类型</th><th>内容</th><th>置信度</th><th>次数</th></tr>';
+    for (var i = 0; i < data.facts.length; i++) {
+      var f = data.facts[i];
+      h += '<tr><td>' + f.type + '</td><td>' + esc(f.content) + '</td><td>' + (f.confidence*100).toFixed(0) + '%</td><td>' + (f.count||1) + '</td></tr>';
+    }
+    h += '</table>';
+  } else {
+    h += '<p style="color:var(--text2)">暂无记忆</p>';
+  }
+  document.getElementById('memoryView').innerHTML = h;
+}
+
+async function setCustomCost() {
+  var uid = document.getElementById('customCostUserId').value.trim();
+  var amount = parseFloat(document.getElementById('customCost').value);
+  if (!uid) return alert('请输入QQ号');
+  if (isNaN(amount) || amount < 0) return alert('请输入有效金额');
+  var data = await api('/api/users/cost', { method: 'POST', body: JSON.stringify({user_id: uid, amount: amount}), headers: {'Content-Type': 'application/json'} });
+  if (data && data.success) loadTiers();
+}
+
+// ========== Logs ==========
+async function refreshLogs() {
+  var data = await api('/api/logs?count=200');
+  if (!data) return;
+  var v = document.getElementById('logViewer');
+  if (data.logs.length === 0) { v.textContent = '暂无日志'; return; }
+  var h = '';
+  for (var i = 0; i < data.logs.length; i++) {
+    var l = data.logs[i];
+    h += '<div class="log-line">[' + l.time + '] [' + l.level + '] [' + l.name + '] ' + esc(l.message) + '</div>';
+  }
+  v.innerHTML = h;
+  v.scrollTop = v.scrollHeight;
+}
+
+async function refreshEvents() {
+  var data = await api('/api/events');
+  if (!data) return;
+  var v = document.getElementById('eventViewer');
+  if (data.events.length === 0) { v.textContent = '暂无事件'; return; }
+  v.textContent = data.events.join('\n');
+  v.scrollTop = v.scrollHeight;
+}
+
+function esc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ========== Uptime ticker ==========
+setInterval(function() {
+  var el = document.getElementById('liveUptime');
+  if (el && serverStartTime) {
+    var sec = Math.floor((Date.now() - serverStartTime) / 1000);
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    el.textContent = h + 'h ' + m + 'm ' + s + 's';
+  }
+}, 1000);
+
+// ========== Auto-refresh ==========
+setInterval(function() {
+  if (document.getElementById('panel-dashboard').classList.contains('active')) loadDashboard();
+  if (document.getElementById('panel-logs').classList.contains('active')) refreshLogs();
+}, 10000);
+
+// ========== Init ==========
+loadDashboard();
+setTimeout(function(){ loadModels(); }, 500);
+</script>
+</body>
+</html>
