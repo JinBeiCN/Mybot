@@ -23,13 +23,13 @@ class RankingGenerator:
     }
 
     # 排行榜配置
-    ITEM_HEIGHT = 28      # 每个条目高度（更紧凑）
-    PADDING = 12          # 内边距
-    HEADER_HEIGHT = 60     # 标题区域高度
-    AVATAR_SIZE = 18      # 头像大小（再减小）
-    IMAGE_SIZE = 650       # 正方形图片尺寸
-    BAR_HEIGHT = 8        # 进度条高度
-    BAR_GAP = 2           # 条目内间距
+    ITEM_HEIGHT = 56      # 每个条目高度
+    PADDING = 24          # 内边距
+    HEADER_HEIGHT = 120   # 标题区域高度
+    AVATAR_SIZE = 36      # 头像大小
+    IMAGE_SIZE = 1200     # 正方形图片尺寸
+    BAR_HEIGHT = 16       # 进度条高度
+    BAR_GAP = 4           # 条目内间距
 
     def __init__(self, bg_dir: str = "data/backgrounds"):
         self.bg_dir = bg_dir
@@ -37,14 +37,13 @@ class RankingGenerator:
         self._bg_cache = None
         self._executor = ThreadPoolExecutor(max_workers=8)
         self._is_shutdown = False
+        self._avatar_cache = {}
 
     def shutdown(self):
         """关闭线程池，释放资源"""
         if not self._is_shutdown:
             self._executor.shutdown(wait=False)
             self._is_shutdown = True
-        self._avatar_cache = {}
-        self._cache_lock = None  # 简化：dict操作本身在单线程内是原子的
 
     def _get_executor(self):
         """获取线程池（如已 shutdown 则报错）"""
@@ -59,7 +58,7 @@ class RankingGenerator:
             return self._avatar_cache[cache_key]
 
         try:
-            url = f"https://q1.qlogo.cn/headimg_dl?dst_uin={qq号}&spec=100"
+            url = f"https://q1.qlogo.cn/headimg_dl?dst_uin={qq号}&spec=640"
             response = requests.get(url, timeout=5)
             if response.status_code == 200:
                 avatar = Image.open(io.BytesIO(response.content)).convert("RGBA")
@@ -217,146 +216,425 @@ class RankingGenerator:
         stats: List[Tuple[str, int, str]],
         group_id: str = ""
     ) -> bytes:
-        """生成排行榜图片
-
-        布局逻辑（从上到下每行）：
-        [排名] [头像] [昵称 xxxxxxxx] [========进度条========] [xx条] [xx%]
-
-        Args:
-            stats: [(QQ号, 发言次数, 昵称), ...] 列表，按发言次数降序
-            group_id: 群号
-
-        Returns:
-            PNG格式的图片字节数据
-        """
         if not stats:
             stats = [("10001", 0, "测试用户")]
 
         stats = stats[:15]
 
-        # 计算自适应条目高度
-        content_height = self.HEADER_HEIGHT + len(stats) * self.ITEM_HEIGHT + self.PADDING
-        img_size = (self.IMAGE_SIZE, self.IMAGE_SIZE)
+        # 动态高度
+        ITEM_H = 74
+        HEADER_H = 160
+        FOOTER_H = 60
+        PAD = 40
+        total_h = HEADER_H + len(stats) * ITEM_H + FOOTER_H
+        W = self.IMAGE_SIZE
+        H = max(self.IMAGE_SIZE, total_h)
 
-        if content_height > self.IMAGE_SIZE:
-            available = self.IMAGE_SIZE - self.PADDING - self.HEADER_HEIGHT
-            effective_item_height = available // len(stats)
-        else:
-            effective_item_height = self.ITEM_HEIGHT
-
-        # 随机获取背景图并裁切到正方形
-        img = self.get_random_background(img_size)
-        img = img.convert("RGBA")
-
-        # 计算背景亮度（用于智能文字颜色）
-        bg_stats = img.getcolors(maxcolors=256)
-        if bg_stats:
-            dominant_color = max(bg_stats, key=lambda x: x[0])[1]
-            bg_brightness = sum(dominant_color[:3]) / 3
-        else:
-            bg_brightness = 30
-
-        contrast_rgb = self._get_contrast_color(bg_brightness)[:3]
-
+        # === 背景：深色科技风 ===
+        img = Image.new("RGBA", (W, H), (8, 12, 24, 255))
         draw = ImageDraw.Draw(img)
 
-        # 标题
-        today = datetime.now().strftime("%Y-%m-%d")
-        title = "今日说话排行榜"
-        try:
-            title_font = self.get_font(24, bold=True)
-            sub_font = self.get_font(13)
-        except Exception:
-            title_font = self.get_font(20)
-            sub_font = self.get_font(11)
+        # 顶部渐变光晕
+        for y in range(300):
+            alpha = int(20 * (1 - y / 300))
+            draw.line([(0, y), (W, y)], fill=(0, 180, 255, alpha))
 
+        # 网格点阵
+        for gx in range(40, W, 40):
+            for gy in range(40, H, 40):
+                draw.ellipse([(gx - 1, gy - 1), (gx + 2, gy + 2)], fill=(255, 255, 255, 6))
+
+        # === 颜色 ===
+        ACCENT = (0, 212, 255)      # 青
+        ACCENT2 = (168, 139, 250)   # 紫
+        GOLD = (255, 200, 60)
+        SILVER = (180, 195, 215)
+        BRONZE = (220, 160, 100)
+        TEXT = (230, 235, 245)
+        SUBTEXT = (110, 120, 150)
+        CARD_BG = (18, 24, 42, 180)
+
+        try:
+            title_font = self.get_font(52, bold=True)
+            sub_font = self.get_font(24)
+        except Exception:
+            title_font = self.get_font(40)
+            sub_font = self.get_font(20)
+
+        # === 顶部装饰线 ===
+        for x in range(0, W, 2):
+            r = int(ACCENT[0] + (ACCENT2[0] - ACCENT[0]) * x / W)
+            g = int(ACCENT[1] + (ACCENT2[1] - ACCENT[1]) * x / W)
+            b = int(ACCENT[2] + (ACCENT2[2] - ACCENT[2]) * x / W)
+            draw.line([(x, 0), (x, 4)], fill=(r, g, b, 200))
+
+        # === 标题 ===
+        today = datetime.now().strftime("%Y.%m.%d")
+        title = "TODAY RANK"
         title_bbox = draw.textbbox((0, 0), title, font=title_font)
-        draw.text(((self.IMAGE_SIZE - (title_bbox[2] - title_bbox[0])) // 2, 8), title, font=title_font, fill=contrast_rgb)
+        tx = (W - (title_bbox[2] - title_bbox[0])) // 2
+        draw.text((tx, 30), title, font=title_font, fill=(255, 255, 255, 240))
 
         sub_bbox = draw.textbbox((0, 0), today, font=sub_font)
-        draw.text(((self.IMAGE_SIZE - (sub_bbox[2] - sub_bbox[0])) // 2, 35), today, font=sub_font, fill=contrast_rgb)
+        draw.text(((W - (sub_bbox[2] - sub_bbox[0])) // 2, 95), today, font=sub_font, fill=ACCENT)
 
-        # 分隔线
-        draw.line([(15, 55), (self.IMAGE_SIZE - 15, 55)], fill=contrast_rgb, width=1)
+        # 分隔线（带渐变）
+        sep_y = 140
+        for sx in range(60, W - 60):
+            ratio = (sx - 60) / (W - 120)
+            alpha = int(80 * (1 - 2 * abs(ratio - 0.5)))
+            r = int(ACCENT[0] * (1 - ratio) + ACCENT2[0] * ratio)
+            g = int(ACCENT[1] * (1 - ratio) + ACCENT2[1] * ratio)
+            b = int(ACCENT[2] * (1 - ratio) + ACCENT2[2] * ratio)
+            draw.line([(sx, sep_y), (sx, sep_y + 1)], fill=(r, g, b, max(0, alpha)))
 
-        # 统计数据
+        # === 数据 ===
         max_count = max(count for _, count, _ in stats) if stats else 1
         total_count = sum(count for _, count, _ in stats)
 
-        # 并行下载所有头像
         executor = self._get_executor()
         avatar_images = list(executor.map(
             lambda qq: self._sync_download_avatar(qq),
             [qq for qq, _, _ in stats]
         ))
 
-        # 布局常量
-        RANK_W = 22       # 排名区域宽度
-        AVATAR_W = self.AVATAR_SIZE + 4  # 头像区域宽度
-        NAME_W = 65       # 昵称区域宽度
-        PCT_W = 40        # 百分比区域宽度
-        MARGIN = 8        # 右边距
-        BAR_Y_OFFSET = 15  # 进度条Y偏移（从条目顶部算）
-        BAR_TOTAL_W = self.IMAGE_SIZE - RANK_W - AVATAR_W - NAME_W - PCT_W - MARGIN - 8
+        left_margin = 50
+        rank_w = 55
+        avatar_w = 60
+        name_w = 170
+        pct_w = 80
+        right_margin = 50
+        bar_area_w = W - left_margin - rank_w - avatar_w - name_w - pct_w - right_margin
 
-            # 绘制每个条目
         for i, (qq号, count, 昵称) in enumerate(stats):
-            y = self.HEADER_HEIGHT + i * effective_item_height
+            y = HEADER_H + i * ITEM_H
+            cx = left_margin
 
-            # 排名
-            rank_color = self.COLORS["rank_gold"] if i == 0 else (
-                self.COLORS["rank_silver"] if i == 1 else (
-                    self.COLORS["rank_bronze"] if i == 2 else contrast_rgb
-                )
+            # 卡片背景
+            card_alpha = 100 if i < 3 else 40
+            draw.rounded_rectangle(
+                [(cx - 12, y + 4), (W - right_margin + 12, y + ITEM_H - 4)],
+                radius=12, fill=CARD_BG
             )
+
+            # 排名徽章
+            rank_colors = {0: GOLD, 1: SILVER, 2: BRONZE}
+            rc = rank_colors.get(i, SUBTEXT)
+            # 圆形背景
+            rcx, rcy = cx + 24, y + ITEM_H // 2
+            rr = 22 if i < 3 else 16
+            if i < 3:
+                draw.ellipse([(rcx - rr, rcy - rr), (rcx + rr, rcy + rr)], fill=rc + (40,))
+                draw.ellipse([(rcx - rr, rcy - rr), (rcx + rr, rcy + rr)], outline=rc + (180,), width=2)
             try:
-                rank_font = self.get_font(10, bold=True)
+                rank_font = self.get_font(22 if i < 3 else 18, bold=i < 3)
             except Exception:
-                rank_font = self.get_font(8)
-            draw.text((4, y + 3), f"#{i + 1}", font=rank_font, fill=rank_color)
+                rank_font = self.get_font(16)
+            rank_str = f"{'#' if i < 3 else ''}{i + 1}"
+            rb = draw.textbbox((0, 0), rank_str, font=rank_font)
+            draw.text((rcx - (rb[2] - rb[0]) // 2, rcy - (rb[3] - rb[1]) // 2 - 2),
+                      rank_str, font=rank_font, fill=rc if i < 3 else SUBTEXT)
+            cx += rank_w
 
             # 头像
-            avatar = self.round_corners(avatar_images[i], self.AVATAR_SIZE // 2)
-            img.paste(avatar, (RANK_W, y + 2), avatar)
+            avatar = self.round_corners(avatar_images[i], 24)
+            av_size = 40 if i < 3 else 32
+            avatar = avatar.resize((av_size, av_size), Image.Resampling.LANCZOS)
+            ay = y + (ITEM_H - av_size) // 2
+            img.paste(avatar, (cx, ay), avatar)
+            cx += avatar_w
 
             # 昵称
             try:
-                name_font = self.get_font(10)
+                name_font = self.get_font(22 if i < 3 else 18)
             except Exception:
-                name_font = self.get_font(8)
-            name_text = (昵称 if 昵称 else qq号)[:5]
-            draw.text((RANK_W + AVATAR_W, y + 3), name_text, font=name_font, fill=contrast_rgb)
+                name_font = self.get_font(16)
+            name_text = (昵称 if 昵称 else qq号)[:8]
+            nb = draw.textbbox((0, 0), name_text, font=name_font)
+            draw.text((cx, y + (ITEM_H - (nb[3] - nb[1])) // 2), name_text, font=name_font, fill=TEXT)
+            cx += name_w
 
-            # 进度条（紧跟昵称）
-            bar_w = int((count / max_count) * BAR_TOTAL_W)
-            bar_y = y + BAR_Y_OFFSET
+            # 进度条
+            bar_w = int((count / max_count) * bar_area_w) if max_count > 0 else 0
+            bar_h = 20 if i < 3 else 14
+            bar_y = y + (ITEM_H - bar_h) // 2
+            # 背景槽
+            draw.rounded_rectangle(
+                [(cx, bar_y), (cx + bar_area_w, bar_y + bar_h)],
+                radius=bar_h // 2, fill=(255, 255, 255, 10)
+            )
             if bar_w > 0:
-                bar_img = self.create_rounded_bar(bar_w, self.BAR_HEIGHT, alpha=80)
-                img.paste(bar_img, (RANK_W + AVATAR_W + NAME_W, bar_y), bar_img)
+                # 渐变填充
+                bar_img = Image.new("RGBA", (bar_area_w, bar_h), (0, 0, 0, 0))
+                bar_draw = ImageDraw.Draw(bar_img)
+                for bx in range(bar_w):
+                    ratio = bx / bar_area_w
+                    r = int(ACCENT[0] * (1 - ratio) + ACCENT2[0] * ratio)
+                    g = int(ACCENT[1] * (1 - ratio) + ACCENT2[1] * ratio)
+                    b = int(ACCENT[2] * (1 - ratio) + ACCENT2[2] * ratio)
+                    bar_draw.line([(bx, 0), (bx, bar_h)], fill=(r, g, b, 220))
+                # 圆角裁剪
+                mask = Image.new("L", (bar_area_w, bar_h), 0)
+                mdraw = ImageDraw.Draw(mask)
+                mdraw.rounded_rectangle([(0, 0), (bar_area_w, bar_h)], radius=bar_h // 2, fill=255)
+                img.paste(bar_img, (cx, bar_y), mask)
 
-            # 条数（紧跟进度条）
-            count_text = f"{count}条"
+            # 条数
+            count_text = f"{count}"
             try:
-                count_font = self.get_font(8)
+                count_font = self.get_font(20 if i < 3 else 16, bold=True)
             except Exception:
-                count_font = self.get_font(7)
-            count_bbox = draw.textbbox((0, 0), count_text, font=count_font)
-            count_w = count_bbox[2] - count_bbox[0]
-            if bar_w > count_w:
-                draw.text((RANK_W + AVATAR_W + NAME_W + bar_w + 2, y + BAR_Y_OFFSET), count_text, font=count_font, fill=contrast_rgb)
+                count_font = self.get_font(14)
+            cb = draw.textbbox((0, 0), count_text, font=count_font)
+            count_y = y + (ITEM_H - (cb[3] - cb[1])) // 2
+            # 居中于进度条
+            count_x = cx + bar_area_w // 2 - (cb[2] - cb[0]) // 2
+            draw.text((count_x, count_y), count_text, font=count_font, fill=(255, 255, 255, 230))
 
             # 百分比
             pct = f"{(count / total_count * 100):.1f}%" if total_count > 0 else "0%"
             try:
-                pct_font = self.get_font(9)
+                pct_font = self.get_font(18 if i < 3 else 14)
             except Exception:
-                pct_font = self.get_font(7)
-            pct_bbox = draw.textbbox((0, 0), pct, font=pct_font)
-            draw.text((self.IMAGE_SIZE - (pct_bbox[2] - pct_bbox[0]) - 6, y + 3), pct, font=pct_font, fill=contrast_rgb)
+                pct_font = self.get_font(12)
+            pb = draw.textbbox((0, 0), pct, font=pct_font)
+            draw.text((cx + bar_area_w + 10, y + (ITEM_H - (pb[3] - pb[1])) // 2),
+                      pct, font=pct_font, fill=rc if i < 3 else SUBTEXT)
+
+        # === 底部 ===
+        footer_y = HEADER_H + len(stats) * ITEM_H + 10
+        footer = f"TOTAL  {total_count}  MESSAGES  ·  {len(stats)}  SPEAKERS"
+        try:
+            footer_font = self.get_font(18)
+        except Exception:
+            footer_font = self.get_font(14)
+        fb = draw.textbbox((0, 0), footer, font=footer_font)
+        draw.text(((W - (fb[2] - fb[0])) // 2, footer_y), footer, font=footer_font, fill=SUBTEXT)
 
         output = io.BytesIO()
         img.save(output, format="PNG")
         return output.getvalue()
+
+    def generate_fortune_image(
+        self,
+        user_id: str,
+        date: str,
+        overall: int, love: int, career: int, wealth: int,
+        lucky_num: int, fortune_desc: str, is_lucky: bool = False,
+        nickname: str = "",
+    ) -> bytes:
+        """生成今日运势卡片 — 典雅金塔罗风格"""
+        W, H = 800, 960
+        BG = (12, 10, 8, 255)          # 近黑深棕
+        img = Image.new("RGBA", (W, H), BG)
+        draw = ImageDraw.Draw(img)
+
+        GOLD = (212, 175, 55)           # 典雅金
+        GOLD_DIM = (180, 150, 50)       # 暗金
+        GOLD_PALE = (232, 210, 130)     # 浅金
+        TEXT = (220, 215, 200)          # 暖白
+        SUBTEXT = (140, 130, 115)       # 灰金
+        DARK = (30, 25, 18, 180)        # 半透暗色
+
+        # === 装饰边框 ===
+        margin = 24
+        border_w = 2
+        # 外边框
+        draw.rounded_rectangle([(margin, margin), (W - margin, H - margin)], radius=20,
+                               outline=GOLD_DIM + (100,), width=border_w)
+        # 内边框
+        inner = 36
+        draw.rounded_rectangle([(inner, inner), (W - inner, H - inner)], radius=14,
+                               outline=GOLD_DIM + (60,), width=1)
+
+        # 四角装饰菱形
+        for cx, cy in [(margin + 10, margin + 10), (W - margin - 10, margin + 10),
+                       (margin + 10, H - margin - 10), (W - margin - 10, H - margin - 10)]:
+            draw.ellipse([(cx - 4, cy - 4), (cx + 5, cy + 5)], fill=GOLD + (120,))
+            draw.ellipse([(cx - 10, cy - 10), (cx + 11, cy + 11)], outline=GOLD_DIM + (50,), width=1)
+
+        # === 顶部光晕 ===
+        for y in range(180):
+            alpha = int(12 * (1 - y / 180))
+            draw.line([(0, y), (W, y)], fill=GOLD + (alpha,))
+
+        # 散落星点
+        import random as _rng
+        _rng.seed(hash(user_id + date) % 2**32)
+        for _ in range(30):
+            sx, sy = _rng.randint(50, W - 50), _rng.randint(60, 400)
+            size = _rng.randint(1, 3)
+            alpha = _rng.randint(40, 120)
+            draw.ellipse([(sx - size, sy - size), (sx + size + 1, sy + size + 1)],
+                         fill=GOLD + (alpha,))
+
+        # === 用户头像 ===
+        avatar_size = 72
+        try:
+            avatar = self._sync_download_avatar(user_id)
+            avatar = self.round_corners(avatar, avatar_size // 2)
+            avatar = avatar.resize((avatar_size, avatar_size), Image.Resampling.LANCZOS)
+            ax = W // 2 - avatar_size // 2
+            ay = 60
+            # 光晕环
+            draw.ellipse([(ax - 8, ay - 8), (ax + avatar_size + 8, ay + avatar_size + 8)],
+                         outline=GOLD + (80,), width=1)
+            img.paste(avatar, (ax, ay), avatar)
+        except Exception:
+            pass
+
+        # === 标题 ===
+        try:
+            title_font = self.get_font(34, bold=True)
+        except Exception:
+            title_font = self.get_font(26)
+        title = "今 日 运 势"
+        tb = draw.textbbox((0, 0), title, font=title_font)
+        draw.text(((W - (tb[2] - tb[0])) // 2, ay + avatar_size + 16), title, font=title_font, fill=GOLD)
+
+        # 日期线
+        try:
+            date_font = self.get_font(16)
+        except Exception:
+            date_font = self.get_font(13)
+        date_str = f"  {date}  "
+        db = draw.textbbox((0, 0), date_str, font=date_font)
+        dx = (W - (db[2] - db[0])) // 2
+        dy = ay + avatar_size + 60
+        # 两侧装饰横线
+        line_len = 60
+        draw.line([(dx - line_len, dy + db[3] // 2), (dx - 10, dy + db[3] // 2)],
+                  fill=GOLD_DIM + (100,), width=1)
+        draw.line([(dx + db[2] + 10, dy + db[3] // 2), (dx + db[2] + line_len, dy + db[3] // 2)],
+                  fill=GOLD_DIM + (100,), width=1)
+        draw.text((dx, dy), date_str, font=date_font, fill=SUBTEXT)
+
+        # === 四项运势 ===
+        categories = [
+            ("总 合 运 势", overall),
+            ("爱 情 运 势", love),
+            ("事 业 运 势", career),
+            ("财 运 指 数", wealth),
+        ]
+
+        bar_start_y = ay + avatar_size + 100
+        bar_area_w = W - 160
+
+        for ci, (cat_name, score) in enumerate(categories):
+            cy = bar_start_y + ci * 110
+
+            # 名称
+            try:
+                cat_font = self.get_font(18)
+            except Exception:
+                cat_font = self.get_font(15)
+            draw.text((80, cy + 6), cat_name, font=cat_font, fill=SUBTEXT)
+
+            # 分数
+            try:
+                score_font = self.get_font(26, bold=True)
+            except Exception:
+                score_font = self.get_font(20)
+            score_str = f"{score}/10"
+            sb2 = draw.textbbox((0, 0), score_str, font=score_font)
+            draw.text((W - 80 - (sb2[2] - sb2[0]), cy), score_str, font=score_font, fill=GOLD)
+
+            # 进度条
+            bar_h = 10
+            bar_x, bar_y = 80, cy + 36
+            # 暗底
+            draw.rounded_rectangle(
+                [(bar_x, bar_y), (bar_x + bar_area_w, bar_y + bar_h)],
+                radius=bar_h // 2, fill=(255, 255, 255, 6)
+            )
+            fill_w = int(bar_area_w * score / 10)
+            if fill_w > 0:
+                bar_img = Image.new("RGBA", (bar_area_w, bar_h), (0, 0, 0, 0))
+                bar_draw = ImageDraw.Draw(bar_img)
+                for bx in range(fill_w):
+                    ratio = bx / bar_area_w
+                    r = int(GOLD_DIM[0] + (GOLD[0] - GOLD_DIM[0]) * ratio)
+                    g = int(GOLD_DIM[1] + (GOLD[1] - GOLD_DIM[1]) * ratio)
+                    b = int(GOLD_DIM[2] + (GOLD[2] - GOLD_DIM[2]) * ratio)
+                    bar_draw.line([(bx, 0), (bx, bar_h)], fill=(r, g, b, 220))
+                mask = Image.new("L", (bar_area_w, bar_h), 0)
+                mdraw = ImageDraw.Draw(mask)
+                mdraw.rounded_rectangle([(0, 0), (bar_area_w, bar_h)], radius=bar_h // 2, fill=255)
+                img.paste(bar_img, (bar_x, bar_y), mask)
+
+            # 星标
+            try:
+                star_font = self.get_font(12)
+            except Exception:
+                star_font = self.get_font(10)
+            stars = "★" * score + "  " + "☆" * (10 - score)
+            draw.text((bar_x, bar_y + 14), stars, font=star_font, fill=GOLD + (140,))
+
+        # === 底部区：幸运数字 + 箴言 ===
+        desc_y = bar_start_y + 4 * 110 + 30
+        sep_y = desc_y - 16
+        # 分隔装饰
+        for sx in range(80, W - 80, 4):
+            alpha = int(60 * (1 - abs(sx - W // 2) / (W // 2 - 80)))
+            draw.line([(sx, sep_y), (sx + 2, sep_y)], fill=GOLD + (max(0, alpha),))
+
+        # 幸运数字
+        try:
+            lucky_font = self.get_font(56, bold=True)
+        except Exception:
+            lucky_font = self.get_font(42)
+        lucky_str = str(lucky_num)
+        lb = draw.textbbox((0, 0), lucky_str, font=lucky_font)
+        lx = W // 2 - 100 - (lb[2] - lb[0])
+        ly = desc_y + 10
+        draw.text((lx, ly), lucky_str, font=lucky_font, fill=GOLD)
+
+        try:
+            lucky_label = self.get_font(14)
+        except Exception:
+            lucky_label = self.get_font(11)
+        draw.text((lx, ly - 16), "LUCKY  NUMBER", font=lucky_label, fill=SUBTEXT)
+
+        # 竖分隔
+        sep_x = W // 2 + 20
+        draw.line([(sep_x, desc_y), (sep_x, desc_y + 130)], fill=GOLD + (60,), width=1)
+
+        # 箴言
+        try:
+            desc_font = self.get_font(17)
+        except Exception:
+            desc_font = self.get_font(14)
+        desc_lines = self._wrap_text(draw, fortune_desc, W - (sep_x + 60), desc_font)
+        for di, dl in enumerate(desc_lines[:4]):
+            draw.text((sep_x + 20, desc_y + 10 + di * 30), dl, font=desc_font, fill=TEXT)
+
+        # === 底部 ===
+        footer = "BEIXAI  ·  D A I L Y   F O R T U N E"
+        try:
+            footer_font = self.get_font(11)
+        except Exception:
+            footer_font = self.get_font(9)
+        fb = draw.textbbox((0, 0), footer, font=footer_font)
+        draw.text(((W - (fb[2] - fb[0])) // 2, H - 60), footer, font=footer_font, fill=SUBTEXT + (80,))
+
+        output = io.BytesIO()
+        img.save(output, format="PNG")
+        return output.getvalue()
+
+    def _wrap_text(self, draw, text: str, max_w: int, font) -> list[str]:
+        """简单换行"""
+        lines = []
+        current = ""
+        for ch in text:
+            test = current + ch
+            if draw.textbbox((0, 0), test, font=font)[2] > max_w and current:
+                lines.append(current)
+                current = ch
+            else:
+                current = test
+        if current:
+            lines.append(current)
+        return lines
 
     def generate_summary_image(
         self,

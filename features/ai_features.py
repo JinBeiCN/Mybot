@@ -263,50 +263,51 @@ class AIFeatures:
         return [word for word, count in counter.most_common(10) if count >= 2]
 
     async def generate_fortune(self, user_id: str) -> str:
-        """生成今日运势（带缓存）"""
+        """生成今日运势（图片），返回特殊标记让调用方发图"""
         try:
-            # 检查缓存
-            cached_fortune = self.fortune_cache.get_fortune(user_id)
-            if cached_fortune:
-                return cached_fortune
+            # 缓存：存分数数据而非文本
+            cached = self.fortune_cache.get_fortune(user_id)
+            if cached and cached.startswith("FORTUNE_DATA:"):
+                parts = cached.split("|")
+                if len(parts) >= 7:
+                    date = parts[0].replace("FORTUNE_DATA:", "")
+                    overall, love, career, wealth, lucky_num = map(int, parts[1:6])
+                    desc = "|".join(parts[6:])  # 描述可能含 |
+                    generator = RankingGenerator()
+                    image = generator.generate_fortune_image(
+                        user_id, date, overall, love, career, wealth, lucky_num, desc, user_id == self.lucky_user
+                    )
+                    return ("__FORTUNE_IMAGE__", image)
+                return cached
 
             date = datetime.now().strftime("%Y-%m-%d")
             seed = generate_daily_seed(user_id, date)
             random.seed(seed)
 
-            # 检查是否是幸运用户
             is_lucky = (user_id == self.lucky_user)
-
             if is_lucky:
-                # 幸运用户固定高分 (9-10星)
                 overall = random.randint(9, 10)
                 love = random.randint(9, 10)
                 career = random.randint(9, 10)
                 wealth = random.randint(9, 10)
             else:
-                # 普通用户随机分数 (1-10星)
                 overall = random.randint(1, 10)
                 love = random.randint(1, 10)
                 career = random.randint(1, 10)
                 wealth = random.randint(1, 10)
 
             lucky_num = random.randint(1, 99)
-
-            # 生成简短的运势描述
             fortune_desc = self._get_fortune_desc(overall, is_lucky)
 
-            result = f"🔮 今日运势 ({date})\n\n"
-            result += f"综合运势: {'⭐' * overall} ({overall}/10)\n"
-            result += f"爱情运势: {'💖' * love} ({love}/10)\n"
-            result += f"事业运势: {'💼' * career} ({career}/10)\n"
-            result += f"财运指数: {'💰' * wealth} ({wealth}/10)\n"
-            result += f"幸运数字: {lucky_num}\n\n"
-            result += f"💭 {fortune_desc}"
+            # 缓存数据
+            cache_data = f"FORTUNE_DATA:{date}|{overall}|{love}|{career}|{wealth}|{lucky_num}|{fortune_desc}"
+            self.fortune_cache.set_fortune(user_id, cache_data)
 
-            # 缓存运势
-            self.fortune_cache.set_fortune(user_id, result)
-
-            return result
+            generator = RankingGenerator()
+            image = generator.generate_fortune_image(
+                user_id, date, overall, love, career, wealth, lucky_num, fortune_desc, is_lucky
+            )
+            return ("__FORTUNE_IMAGE__", image)
         except Exception as e:
             return f"运势生成失败: {str(e)}"
 
@@ -314,33 +315,43 @@ class AIFeatures:
         """根据运势分数生成简短描述"""
         if is_lucky:
             descs = [
-                "今天是你的幸运日！万事顺心，好运连连！",
-                "运势爆棚！把握机会，大展宏图！",
-                "诸事大吉！今天做什么都会很顺利！"
+                "今天是你的幸运日，星辰为你排列，大胆去追你想要的吧。",
+                "运势如虹，贵人暗助，今天你走到哪里都有光。",
+                "诸事皆宜，百无禁忌，今天整个世界都在配合你的节奏。",
+                "命运的天平今天向你倾斜，把握这个机会别浪费了。",
+                "幸运女神今天只为你值班，想做什么都有人帮你。",
             ]
         elif overall >= 8:
             descs = [
-                "运势极佳！今天适合做重要决定。",
-                "好运当头！把握机会，勇敢前行。",
-                "运气不错！今天会有意外惊喜。"
+                "运势极佳，今天做重要决定会比平时更有把握。",
+                "好运当头，直觉会比平时更准，相信你的第一反应。",
+                "今日有意外之喜，可能来自一个陌生人的一句话。",
+                "状态在线，效率拉满，趁热打铁把重要的事处理了。",
+                "心情和运气同时在线，今天适合主动出击。",
             ]
         elif overall >= 6:
             descs = [
-                "运势平稳，保持积极心态即可。",
-                "今天适合稳扎稳打，不宜冒险。",
-                "运势尚可，顺其自然就好。"
+                "运势平稳，不大起大落，适合按部就班推进日常事务。",
+                "今天宜稳不宜冲，把手里的事做好比开新坑更重要。",
+                "平淡中藏着小确幸，留心身边的小事会有意外收获。",
+                "不好不坏的一天，但心态好的话什么都是好日子。",
+                "今日宜守不宜攻，做好本分就是最好的进攻。",
             ]
         elif overall >= 4:
             descs = [
-                "运势一般，注意细节，避免失误。",
-                "今天需要谨慎行事，三思而后行。",
-                "运势平平，低调行事为宜。"
+                "运势稍低，今天注意细节别马虎，重要的事多检查一遍。",
+                "今日不宜做重大决策，先把小事情收拾利索。",
+                "运气一般般，但你的努力可以弥补运气的缺口。",
+                "低调行事，减少不必要的社交，把精力留给真正重要的事。",
+                "今天宜养生宜休息，世界不缺你这一天的忙碌。",
             ]
         else:
             descs = [
-                "运势欠佳，建议今天多休息，少折腾。",
-                "今天不太顺利，保持耐心，明天会更好。",
-                "运势低迷，静待时机，不宜强求。"
+                "运势低迷，今天适合摆烂，明天太阳照常升起。",
+                "今日宜躺平，不宜硬刚，运气不好不是你的问题。",
+                "星象不太友好，但这只是暂时的，静待风头过。",
+                "今天是那种'别折腾了好好休息'的日子，听话。",
+                "运势触底必反弹，今天先静观其变，明天又是新的一天。",
             ]
 
         return random.choice(descs)

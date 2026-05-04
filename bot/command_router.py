@@ -55,9 +55,9 @@ class CommandRouter:
             # 特殊处理：在 main.py 中生成图片
             return (False, "__GENERATE_SUMMARY_IMAGE__")
 
-        # 运势匹配
+        # 运势匹配（返回图片标记）
         elif command == "运势" or command == "个人运势" or full_text == "个人运势":
-            return (False, await self.ai_features.generate_fortune(user_id))
+            return (False, "__FORTUNE_IMAGE__")
 
         elif command == "作诗":
             return (False, await self.ai_features.generate_poem(args))

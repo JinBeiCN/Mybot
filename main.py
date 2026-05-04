@@ -534,7 +534,7 @@ class BeiXAIBot:
             if cut == -1:
                 cut = remaining.rfind("？", 0, max_len)
             if cut == -1:
-                cut = remaining.rfind("\n", 0, max_len)
+                cut = remaining.rfind("~", 0, max_len)
             if cut == -1:
                 cut = max_len
             else:
@@ -792,12 +792,22 @@ class BeiXAIBot:
                 if response == "__GENERATE_SUMMARY_IMAGE__":
                     if not self.check_rate_limit(group_id):
                         return
-                    # 生成图片
                     success, result = await self.ai_features.summarize_today_image(group_id)
                     if success:
                         await self.ws_client.send_group_image(group_id, result)
                     else:
                         await self.ws_client.send_group_message(group_id, result)
+                    return
+
+                # 特殊处理：运势图片
+                if response == "__FORTUNE_IMAGE__":
+                    if not self.check_rate_limit(group_id):
+                        return
+                    fortune_result = await self.ai_features.generate_fortune(user_id)
+                    if isinstance(fortune_result, tuple) and fortune_result[0] == "__FORTUNE_IMAGE__":
+                        await self.ws_client.send_group_image(group_id, fortune_result[1])
+                    else:
+                        await self.ws_client.send_group_message(group_id, str(fortune_result))
                     return
 
                 # AI命令需要检查速率限制
@@ -823,9 +833,12 @@ class BeiXAIBot:
                     # 检查速率限制
                     if not self.check_rate_limit(group_id):
                         return
-                    # 生成运势
+                    # 生成运势图片
                     response = await self.ai_features.generate_fortune(user_id)
-                    await self.ws_client.send_group_message(group_id, response)
+                    if isinstance(response, tuple) and response[0] == "__FORTUNE_IMAGE__":
+                        await self.ws_client.send_group_image(group_id, response[1])
+                    else:
+                        await self.ws_client.send_group_message(group_id, str(response))
                     return
 
                 # 关键词过滤检测
@@ -1032,6 +1045,9 @@ class BeiXAIBot:
             # 本地命令（不需要 AI）
             if command == "运势" or command == "个人运势":
                 response = await self.ai_features.generate_fortune(user_id)
+                if isinstance(response, tuple) and response[0] == "__FORTUNE_IMAGE__":
+                    await self.ws_client.send_private_image(user_id, response[1])
+                return
             elif command == "星座":
                 if not args:
                     await self.ws_client.send_private_message(user_id, "请提供星座名称，例如：星座 白羊座")
