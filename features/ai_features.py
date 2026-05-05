@@ -202,8 +202,20 @@ class AIFeatures:
                 content_lines.append("今日概要:")
                 summary_lines = summary.split("\n")
                 for line in summary_lines:
-                    if line.strip():
-                        content_lines.append(f"  {line}")
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    # 处理 markdown 格式
+                    cleaned = re.sub(r"\*\*(.+?)\*\*", r"\1", stripped)  # **粗体**
+                    cleaned = re.sub(r"\*(.+?)\*", r"\1", cleaned)        # *斜体*
+                    cleaned = re.sub(r"`{1,3}[^`]*`{1,3}", "", cleaned)   # `代码`
+                    cleaned = re.sub(r"^#{1,3}\s*", "", cleaned)           # # 标题
+                    cleaned = re.sub(r"^[-*+]\s+", "  · ", cleaned)        # - 列表
+                    cleaned = re.sub(r"^>\s*", "  ", cleaned)              # > 引用
+                    cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)  # [链接](url)
+                    cleaned = re.sub(r"!\[.*?\]\([^)]+\)", "[图片]", cleaned)    # ![图片](url)
+                    if cleaned.strip():
+                        content_lines.append(f"  {cleaned.strip()}")
 
             generator = RankingGenerator()
             title = f"📊 {today_date} 群信息总结"
@@ -219,7 +231,7 @@ class AIFeatures:
         """提取今日主题词（偏讨论主题，过滤口头禅和昵称）"""
         stop_words = {
             # 常见口头禅
-            "哈哈", "哈哈哈", "hhhh", "笑死", "666", "wwww", "草", "草", "操", "靠", "艹",
+            "哈哈", "哈哈哈", "hhhh", "笑死", "666", "wwww", "草", "操", "靠", "艹",
             # 常见无意义词
             "图片", "消息", "今天", "今日", "这个", "那个", "我们", "你们", "他们", "自己",
             "不是", "就是", "还是", "真的", "感觉", "已经", "没有", "什么", "怎么", "可以",
@@ -227,8 +239,13 @@ class AIFeatures:
             "这样", "那样", "这么", "那么", "可能", "或者", "但是", "而且", "如果", "虽然",
             # 常见问候/表情
             "你好", "晚安", "早上好", "午安", "在吗", "在不在", "嗯", "哦", "啊", "唉", "诶",
-            # 英文常见词
-            "lol", "www", "emm", "fff", "xxx", "yyy",
+            # OCR 系统残留词
+            "image", "Image", "type", "Type", "file", "File", "sub", "Sub", "url", "Url", "URL",
+            "data", "Data", "json", "Json", "XML", "xml", "CQ", "record", "video", "rich",
+            "summary", "Summary", "subType", "summary开始", "markdown", "markdown开始",
+            # 更多英文常见词
+            "lol", "www", "emm", "fff", "xxx", "yyy", "the", "The", "and", "for", "this",
+            "that", "with", "from", "have", "been", "were", "they", "your", "what", "when",
         }
         # 排除单字重复如 "哈哈哈哈哈"
         pattern_repeat1 = re.compile(r"^(.)\1{2,}$")
@@ -256,6 +273,9 @@ class AIFeatures:
                     continue
                 # 跳过重复字如 "哈哈哈"
                 if pattern_repeat1.match(token):
+                    continue
+                # 跳过纯英文技术词汇（驼峰/下划线/短词）
+                if token.isascii() and (len(token) < 4 or "_" in token or token[0].isupper()):
                     continue
                 counter[token] += 1
 

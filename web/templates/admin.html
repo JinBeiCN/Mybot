@@ -417,14 +417,42 @@ async function loadMemory() {
   if (!data || data.error) { document.getElementById('memoryView').innerHTML = '<p style="color:var(--red)">加载失败</p>'; return; }
   var h = '<p style="color:var(--text2)">交互次数: ' + data.total_interactions + ' | 记忆数: ' + data.total_facts + ' | 更新: ' + (data.last_updated || '无') + '</p>';
   if (data.summary) h += '<p style="background:var(--bg);padding:8px;border-radius:4px;margin:8px 0"><b>摘要:</b> ' + esc(data.summary) + '</p>';
-  if (data.facts && data.facts.length > 0) {
-    h += '<table><tr><th>类型</th><th>内容</th><th>置信度</th><th>次数</th></tr>';
+  // 把 style 类型的记忆单独展示
+  var styleFacts = [], otherFacts = [];
+  if (data.facts) {
     for (var i = 0; i < data.facts.length; i++) {
       var f = data.facts[i];
+      if (f.type === 'style') styleFacts.push(f); else otherFacts.push(f);
+    }
+  }
+  // 风格指纹卡片
+  if (styleFacts.length > 0) {
+    var sf = styleFacts[0];
+    h += '<div style="background:linear-gradient(135deg, rgba(212,175,55,0.15), rgba(180,150,50,0.05));border:1px solid rgba(212,175,55,0.3);border-radius:8px;padding:12px;margin:12px 0">';
+    h += '<b style="color:#d4af37">语气风格指纹</b>';
+    h += '<p style="margin-top:6px">' + esc(sf.content) + '</p>';
+    var fp = sf._fingerprint;
+    if (fp) {
+      h += '<div style="font-size:11px;color:var(--text2);margin-top:8px;display:flex;flex-wrap:wrap;gap:8px">';
+      h += '<span>均句长: ' + fp.avg_len + '字</span>';
+      h += '<span>口语度: ' + fp.oral_score + '</span>';
+      h += '<span>表情频: ' + fp.emoji_freq + '/条</span>';
+      h += '<span>短句比: ' + (fp.short_ratio*100).toFixed(0) + '%</span>';
+      h += '<span>基调: ' + fp.tone + '</span>';
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  // 其他记忆
+  if (otherFacts.length > 0) {
+    h += '<table><tr><th>类型</th><th>内容</th><th>置信度</th><th>次数</th></tr>';
+    for (var i = 0; i < otherFacts.length; i++) {
+      var f = otherFacts[i];
       h += '<tr><td>' + f.type + '</td><td>' + esc(f.content) + '</td><td>' + (f.confidence*100).toFixed(0) + '%</td><td>' + (f.count||1) + '</td></tr>';
     }
     h += '</table>';
-  } else {
+  }
+  if (!styleFacts.length && !otherFacts.length) {
     h += '<p style="color:var(--text2)">暂无记忆</p>';
   }
   document.getElementById('memoryView').innerHTML = h;

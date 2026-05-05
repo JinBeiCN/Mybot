@@ -5,6 +5,9 @@ import random
 import re
 import sys
 import time
+from email.utils import parsedate_to_datetime
+
+import aiohttp
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -445,6 +448,15 @@ class BeiXAIBot:
             # 每 50 次交互生成一次记忆摘要
             if stats["total_interactions"] > 0 and stats["total_interactions"] % 50 == 0:
                 await self._generate_memory_summary(user_id)
+
+            # 每 20 次交互提取一次风格指纹
+            if stats["total_interactions"] > 0 and stats["total_interactions"] % 20 == 0:
+                context = self.context_manager.get_context(f"private_{user_id}", user_id)
+                user_msgs = [m["content"] for m in context[-40:] if m["role"] == "user"]
+                if len(user_msgs) >= 10:
+                    fp = self.user_memory.extract_style_fingerprint(user_msgs)
+                    desc = self.user_memory.set_style(user_id, fp)
+                    self.logger.info(f"更新用户 {user_id} 风格指纹: {desc[:50]}...")
         except Exception as e:
             self.logger.error(f"提取记忆失败: {e}")
 
@@ -1065,11 +1077,14 @@ class BeiXAIBot:
                 full_msg = f"{command} {args}" if command and args else (command or plain_text)
                 now = datetime.now()
                 time_ctx = f"[当前时间: {now.strftime('%Y年%m月%d日 %H:%M')}，{['凌晨','早上','上午','中午','下午','傍晚','晚上','深夜'][min(7, now.hour // 3)]}]"
-                # 注入长期记忆
+                # 注入长期记忆 + 语气风格
                 memory_ctx = self.user_memory.build_memory_prompt(user_id, plain_text or (command or ""))
+                style_ctx = self.user_memory.build_style_prompt(user_id)
                 full_msg = f"{time_ctx} {full_msg}"
                 if memory_ctx:
                     full_msg = memory_ctx + "\n" + full_msg
+                if style_ctx:
+                    full_msg = style_ctx + "\n" + full_msg
                 response = await self.ai_features.chat_with_profile(
                     f"private_{user_id}", user_id, full_msg,
                     user_profile=user_profile, tier=tier, private_chat=True,
@@ -1195,7 +1210,21 @@ class BeiXAIBot:
 
     async def _sign_check_loop(self):
         """后台循环：精确到秒的对齐检查，等待 WS 连接就绪后再执行"""
-        self.logger.info("打卡时间检查任务已启动，等待 WebSocket 连接就绪...")
+        self.logger.info("打卡时间检查任务已启动，正在同步时间...")
+
+        # 时间偏差检测：对比本地时间和 HTTP 服务器时间
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get("https://api.siliconflow.cn/v1/models", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    server_date = resp.headers.get("Date", "")
+                    if server_date:
+                        from email.utils import parsedate_to_datetime as _parse_dt
+                        server_dt = _parse_dt(server_date)
+                        local_dt = datetime.now(server_dt.tzinfo) if server_dt.tzinfo else datetime.now()
+                        drift = (local_dt - server_dt.replace(tzinfo=None)).total_seconds()
+                        self.logger.info(f"时间同步: 本地偏移 {drift:+.1f}秒 {'(偏快)' if drift > 2 else '(偏慢)' if drift < -2 else '(正常)'}")
+        except Exception:
+            self.logger.info("时间同步跳过（网络不可用）")
 
         # 等待 WebSocket 连接建立，最多等 30 秒
         for _ in range(30):
@@ -1238,8 +1267,8 @@ class BeiXAIBot:
                         coarse = (today_target - now).total_seconds() - 12
                         if coarse > 0:
                             await asyncio.sleep(coarse)
-                        # 精确等待到目标前2秒：线程级精度，不受事件循环竞争影响
-                        fire_start = today_target - timedelta(seconds=2)
+                        # 精确等待到目标前8秒，配合宽窗口覆盖时钟偏差
+                        fire_start = today_target - timedelta(seconds=8)
                         remaining = (fire_start - datetime.now()).total_seconds()
                         if remaining > 0:
                             await asyncio.get_running_loop().run_in_executor(None, time.sleep, remaining)
@@ -1253,16 +1282,22 @@ class BeiXAIBot:
                     self.sign_last_date = today_str
                     self._save_sign_last_date(today_str)
 
-                    # 连续3次打卡请求（间隔2秒），确保命中
-                    self.logger.info("打卡窗口开始，连续3次发送打卡请求")
-                    sign_tasks = []
-                    for i in range(3):
-                        if i > 0:
-                            await asyncio.sleep(2)
-                        sign_tasks.append(asyncio.create_task(self._do_auto_sign()))
-                        self.logger.info(f"第 {i+1}/3 次打卡请求已发出")
+                    # 宽窗口覆盖：6次请求，间隔4秒，从T-8到T+12覆盖20秒窗口
+                    # 适应系统时钟偏差和网络延迟
+                    burst_count = 6
+                    burst_interval = 4
+                    self.logger.info(f"打卡窗口开始，{burst_count}次请求覆盖{burst_count * burst_interval}秒窗口")
+                    self.logger.info(f"本地时间: {datetime.now().strftime('%H:%M:%S.%f')[:-3]}，目标: {today_target.strftime('%H:%M:%S')}")
 
-                    # 等待所有打卡任务完成
+                    sign_tasks = []
+                    for i in range(burst_count):
+                        if i > 0:
+                            await asyncio.sleep(burst_interval)
+                        actual = datetime.now()
+                        drift = (actual - today_target).total_seconds()
+                        self.logger.info(f"第 {i+1}/{burst_count} 次打卡 (T{drift:+.1f}s)")
+                        sign_tasks.append(asyncio.create_task(self._do_auto_sign()))
+
                     for task in sign_tasks:
                         try:
                             await asyncio.wait_for(task, timeout=15)

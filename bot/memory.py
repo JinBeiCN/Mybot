@@ -146,3 +146,136 @@ class UserMemory:
                    "goal": "目标", "fact": "信息"}.get(f["type"], f["type"])
             lines.append(f"- {tag}: {f['content']}")
         return "\n".join(lines)
+
+    # ==================== 风格指纹 ====================
+
+    def extract_style_fingerprint(self, messages: list[str]) -> dict:
+        """从用户最近消息中提取语气风格指纹（纯统计，无 API 调用）"""
+        if not messages:
+            return {}
+        total = len(messages)
+        total_chars = sum(len(m) for m in messages)
+        avg_len = total_chars / total
+
+        # 标点偏好
+        punct = {"，": 0, "。": 0, "！": 0, "？": 0, "~": 0, "…": 0, "...": 0}
+        all_text = "".join(messages)
+        for k in punct:
+            punct[k] = all_text.count(k)
+
+        # 高频短词（中文2-4字 + 常见口头禅）
+        raw_words = re.findall(r"[一-鿿]{2,4}|[a-z]{3,}", all_text.lower())
+        word_freq = {}
+        for w in raw_words:
+            word_freq[w] = word_freq.get(w, 0) + 1
+        top_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:15]
+
+        # 口语化指标
+        oral_markers = ["草", "笑死", "救命", "确实", "绝了", "好吧", "行吧", "嗯", "啊这",
+                        "哈哈", "hhhh", "绷不住", "难绷", "蚌埠", "哈哈哈哈", "www", "qwq", "orz"]
+        oral_score = sum(all_text.count(m) for m in oral_markers)
+
+        # 句长分布
+        sentences = re.split(r"[。！？\n]", all_text)
+        short_sentences = sum(1 for s in sentences if 1 <= len(s.strip()) <= 10)
+        long_sentences = sum(1 for s in sentences if len(s.strip()) > 50)
+
+        # emoji 频率
+        emoji_count = len(re.findall(r"[一-鿿]{1,2}[️︎]*", all_text))  # 简略估算
+        emoji_count += all_text.count("qwq") + all_text.count("orz") + all_text.count("www")
+
+        # 整体语气倾向
+        tone_markers = {"热情": ["哈哈", "！！", "好好好", "太棒", "开心", "嘿嘿", "耶"],
+                        "冷静": ["嗯", "好的", "行", "可以", "👌", "了解"],
+                        "毒舌": ["笑死", "绷不住", "难绷", "就这", "不是吧", "草"]}
+        tone_scores = {}
+        for tone, markers in tone_markers.items():
+            tone_scores[tone] = sum(all_text.count(m) for m in markers)
+
+        return {
+            "avg_len": round(avg_len, 1),
+            "total_messages": total,
+            "top_words": top_words[:10],
+            "oral_score": oral_score,
+            "short_ratio": round(short_sentences / max(len(sentences), 1), 2),
+            "long_ratio": round(long_sentences / max(len(sentences), 1), 2),
+            "emoji_freq": round(emoji_count / max(total, 1), 1),
+            "tone": max(tone_scores, key=tone_scores.get) if max(tone_scores.values()) > 0 else "中性",
+            "punct_top": sorted(punct.items(), key=lambda x: x[1], reverse=True)[:3],
+        }
+
+    def set_style(self, user_id: str, fingerprint: dict):
+        """存储风格指纹到用户记忆"""
+        data = self.load(user_id)
+
+        # 生成风格描述文本
+        fp = fingerprint
+        desc_lines = []
+        if fp.get("avg_len", 0) < 20:
+            desc_lines.append("消息很短")
+        elif fp.get("avg_len", 0) > 60:
+            desc_lines.append("消息较长、喜欢展开说")
+
+        tone = fp.get("tone", "中性")
+        tone_map = {"热情": "语气热烈外向", "冷静": "语气冷静克制", "毒舌": "语气毒舌有梗", "中性": "语气中性随意"}
+        desc_lines.append(tone_map.get(tone, tone))
+
+        if fp.get("oral_score", 0) > 10:
+            desc_lines.append("口语化程度高、常用网络流行语")
+        if fp.get("emoji_freq", 0) > 2:
+            desc_lines.append("喜欢用表情/颜文字")
+
+        top_words = fp.get("top_words", [])[:5]
+        if top_words:
+            words_str = "、".join([w[0] for w in top_words])
+            desc_lines.append(f"高频词: {words_str}")
+
+        desc = "；".join(desc_lines)
+
+        # 去重更新 style 类型的记忆
+        for f in data.get("facts", []):
+            if f.get("type") == "style":
+                f["content"] = desc
+                f["confidence"] = 0.9
+                f["count"] = f.get("count", 1) + 1
+                f["last_seen"] = time.strftime("%Y-%m-%d %H:%M")
+                f["_fingerprint"] = fingerprint
+                self.save(user_id, data)
+                return desc
+
+        self.add_fact(user_id, "style", desc, confidence=0.8)
+        # 附加指纹数据到刚才添加的 fact
+        data = self.load(user_id)
+        for f in data["facts"]:
+            if f.get("type") == "style":
+                f["_fingerprint"] = fingerprint
+        self.save(user_id, data)
+        return desc
+
+    def build_style_prompt(self, user_id: str) -> str:
+        """构建语气风格的提示词片段"""
+        data = self.load(user_id)
+        style_fact = None
+        for f in data.get("facts", []):
+            if f.get("type") == "style":
+                style_fact = f
+                break
+        if not style_fact:
+            return ""
+
+        content = style_fact.get("content", "")
+        fp = style_fact.get("_fingerprint", {})
+
+        lines = ["\n\n[语气适配 — 你和对方聊天时可以参考以下风格]"]
+        lines.append(f"对方说话特点: {content}")
+        lines.append("你的回复应该在保持 Hina 人格的前提下，自然地靠近对方的语气节奏。")
+        if fp.get("avg_len", 50) < 20:
+            lines.append("对方消息短，你也不用回太长。")
+        tone = fp.get("tone", "")
+        if tone == "热情":
+            lines.append("可以稍微热一点回应，不用太克制。")
+        elif tone == "毒舌":
+            lines.append("可以放开点吐槽，对方喜欢这种感觉。")
+        elif tone == "冷静":
+            lines.append("保持简洁，不用太热情。")
+        return "\n".join(lines)

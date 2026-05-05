@@ -11,7 +11,7 @@ class SiliconFlowAPI:
         self.api_keys = api_keys
         self.base_url = base_url
         self.model = model
-        self.ocr_model = "Qwen/Qwen3-VL-8B-Instruct"  # 视觉模型
+        self.ocr_model = "Qwen/Qwen2.5-VL-32B-Instruct"  # 视觉模型
         self.custom_model = ""   # 用户自定义模型 ID
         self.custom_base_url = ""  # 用户自定义 base URL
         self._key_index = 0
